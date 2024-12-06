@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 )
 
 func main() {
@@ -22,6 +20,9 @@ func main() {
 
 	case "hash-object":
 		hashObject(os.Args[3])
+
+	case "ls-tree":
+		lsTree(os.Args[3])
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command %s\n", command)
@@ -67,51 +68,18 @@ func catFile(sha1 string) {
 		os.Exit(1)
 	}
 
-	if strings.HasPrefix(decompressed, "blob") {
-		blob, err := deserializeBlob(decompressed)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing blob: %s\n", err)
-			os.Exit(1)
-		}
-
-		fmt.Print(blob.data)
-	}
-}
-
-var nullByte = '\x00'
-
-type blob struct {
-	size int
-	data string
-}
-
-func deserializeBlob(str string) (blob, error) {
-	startIdx := strings.Index(str, "blob ") + len("blob ")
-	j := 0
-
-	for i, ch := range str[startIdx:] {
-		if ch == nullByte {
-			j = i
-			break
-		}
-	}
-
-	sizeSection := str[startIdx : startIdx+j]
-	size, err := strconv.Atoi(sizeSection)
+	gitObj, err := parseObjectContent(decompressed)
 	if err != nil {
-		return blob{}, fmt.Errorf("Error converting size to int: %s", err)
+		fmt.Fprintf(os.Stderr, "Error parsing object: %s\n", err)
+		os.Exit(1)
 	}
 
-	data := str[startIdx+j+1:]
+	if gitObj.getType() != "blob" {
+		fmt.Fprintf(os.Stderr, "Object is not a blob\n")
+		os.Exit(1)
+	}
 
-	return blob{
-		size,
-		data,
-	}, nil
-}
-
-func serializeBlob(b blob) string {
-	return fmt.Sprintf("blob %d\x00%s", b.size, b.data)
+	fmt.Print(string(gitObj.(blob).content))
 }
 
 func hashObject(filepath string) {
@@ -128,11 +96,11 @@ func hashObject(filepath string) {
 	}
 
 	b := blob{
-		size: int(stats.Size()),
-		data: string(data),
+		size:    int(stats.Size()),
+		content: data,
 	}
 
-	serialized := serializeBlob(b)
+	serialized := b.String()
 	sha1, err := computeSHA1([]byte(serialized))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error computing SHA-1: %s\n", err)
@@ -151,4 +119,33 @@ func hashObject(filepath string) {
 	}
 
 	fmt.Print(sha1)
+}
+
+func lsTree(sha1 string) {
+	compressed, err := readFromSHA1(sha1)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
+		os.Exit(1)
+	}
+
+	decompressed, err := zlibDecompress(compressed)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error decompressing file: %s\n", err)
+		os.Exit(1)
+	}
+
+	gitObj, err := parseObjectContent(decompressed)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing object: %s\n", err)
+		os.Exit(1)
+	}
+
+	if gitObj.getType() != "tree" {
+		fmt.Fprintf(os.Stderr, "Object is not a blob\n")
+		os.Exit(1)
+	}
+
+	for _, node := range gitObj.(tree).nodes {
+		fmt.Println(node.name)
+	}
 }
