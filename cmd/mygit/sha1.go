@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha1"
 	"fmt"
 	"os"
 )
@@ -16,4 +17,33 @@ func readFromSHA1(sha1 string) ([]byte, error) {
 	}
 
 	return contents, nil
+}
+
+func writeToSHA1(sha1 string, data []byte) error {
+	dir := sha1[0:2]
+
+	err := os.Mkdir(".git/objects/"+dir, 0755)
+	if err != nil {
+		return fmt.Errorf("Error creating directory: %s\n", err)
+	}
+
+	filename := sha1[2:]
+
+	filePath := fmt.Sprintf(".git/objects/%s/%s", dir, filename)
+	err = os.WriteFile(filePath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("Error writing file: %s\n", err)
+	}
+
+	return nil
+}
+
+func computeSHA1(data []byte) (string, error) {
+	hash := sha1.New()
+	if _, err := hash.Write(data); err != nil {
+		return "", fmt.Errorf("Error writing data to hash: %s\n", err)
+	}
+
+	summed := hash.Sum(nil)
+	return fmt.Sprintf("%x", summed), nil
 }

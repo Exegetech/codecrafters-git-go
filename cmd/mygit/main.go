@@ -20,6 +20,9 @@ func main() {
 	case "cat-file":
 		catFile(os.Args[3])
 
+	case "hash-object":
+		hashObject(os.Args[3])
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command %s\n", command)
 		os.Exit(1)
@@ -65,7 +68,7 @@ func catFile(sha1 string) {
 	}
 
 	if strings.HasPrefix(decompressed, "blob") {
-		blob, err := parseBlob(decompressed)
+		blob, err := deserializeBlob(decompressed)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error parsing blob: %s\n", err)
 			os.Exit(1)
@@ -82,7 +85,7 @@ type blob struct {
 	data string
 }
 
-func parseBlob(str string) (blob, error) {
+func deserializeBlob(str string) (blob, error) {
 	startIdx := strings.Index(str, "blob ") + len("blob ")
 	j := 0
 
@@ -105,4 +108,47 @@ func parseBlob(str string) (blob, error) {
 		size,
 		data,
 	}, nil
+}
+
+func serializeBlob(b blob) string {
+	return fmt.Sprintf("blob %d\x00%s", b.size, b.data)
+}
+
+func hashObject(filepath string) {
+	stats, err := os.Stat(filepath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting file stats: %s\n", err)
+		os.Exit(1)
+	}
+
+	data, err := os.ReadFile(filepath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
+		os.Exit(1)
+	}
+
+	b := blob{
+		size: int(stats.Size()),
+		data: string(data),
+	}
+
+	serialized := serializeBlob(b)
+	sha1, err := computeSHA1([]byte(serialized))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error computing SHA-1: %s\n", err)
+		os.Exit(1)
+	}
+
+	compressed, err := zlibCompress([]byte(serialized))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error compressing data: %s\n", err)
+		os.Exit(1)
+	}
+
+	if err = writeToSHA1(sha1, compressed); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing file: %s\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Print(sha1)
 }

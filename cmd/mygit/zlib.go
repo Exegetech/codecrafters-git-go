@@ -22,3 +22,16 @@ func zlibDecompress(data []byte) (string, error) {
 
 	return decompressed.String(), nil
 }
+
+func zlibCompress(data []byte) ([]byte, error) {
+	var buffer bytes.Buffer
+	zlibWriter := zlib.NewWriter(&buffer)
+
+	_, err := zlibWriter.Write(data)
+	if err != nil {
+		return nil, fmt.Errorf("Error writing data to zlib writer: %s", err)
+	}
+	zlibWriter.Close()
+
+	return buffer.Bytes(), nil
+}
