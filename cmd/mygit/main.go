@@ -24,6 +24,9 @@ func main() {
 	case "ls-tree":
 		lsTree(os.Args[3])
 
+	case "write-tree":
+		writeTree()
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command %s\n", command)
 		os.Exit(1)
@@ -83,42 +86,15 @@ func catFile(sha1 string) {
 }
 
 func hashObject(filepath string) {
-	stats, err := os.Stat(filepath)
+	sha1, err := runHashBlob(filepath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting file stats: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to hash blob: %s\n", err)
 		os.Exit(1)
 	}
 
-	data, err := os.ReadFile(filepath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
-		os.Exit(1)
-	}
+	hex := fmt.Sprintf("%x", sha1)
 
-	b := blob{
-		size:    int(stats.Size()),
-		content: data,
-	}
-
-	serialized := b.String()
-	sha1, err := computeSHA1([]byte(serialized))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error computing SHA-1: %s\n", err)
-		os.Exit(1)
-	}
-
-	compressed, err := zlibCompress([]byte(serialized))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error compressing data: %s\n", err)
-		os.Exit(1)
-	}
-
-	if err = writeToSHA1(sha1, compressed); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing file: %s\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Print(sha1)
+	fmt.Print(hex)
 }
 
 func lsTree(sha1 string) {
@@ -148,4 +124,22 @@ func lsTree(sha1 string) {
 	for _, node := range gitObj.(tree).nodes {
 		fmt.Println(node.name)
 	}
+}
+
+func writeTree() {
+	currDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get current directory: %s", err)
+		os.Exit(1)
+	}
+
+	sha1, err := runHashTree(currDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write tree: %s", err)
+		os.Exit(1)
+	}
+
+	hex := fmt.Sprintf("%x", sha1)
+
+	fmt.Print(hex)
 }

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 )
 
@@ -24,8 +26,8 @@ func (b blob) getSize() int {
 	return b.size
 }
 
-func (b blob) String() string {
-	return fmt.Sprintf("blob %d\x00%s", b.size, b.content)
+func (b blob) Bytes() []byte {
+	return []byte(fmt.Sprintf("blob %d\x00%s", b.size, b.content))
 }
 
 type tree struct {
@@ -45,6 +47,21 @@ func (t tree) getType() string {
 
 func (t tree) getSize() int {
 	return t.size
+}
+
+func (t tree) Bytes() []byte {
+	total := []byte{}
+
+	header := fmt.Sprintf("tree %d\x00", t.size)
+	total = append(total, []byte(header)...)
+
+	for _, node := range t.nodes {
+		entry := fmt.Sprintf("%s %s\x00", node.mode, node.name)
+		total = append(total, []byte(entry)...)
+		total = append(total, node.hash[:]...)
+	}
+
+	return total
 }
 
 func parseObjectContent(data []byte) (gitObject, error) {
@@ -125,4 +142,117 @@ func parseTreeEntry(data []byte) ([]treeNode, error) {
 	}
 
 	return entries, nil
+}
+
+func runHashBlob(filepath string) ([]byte, error) {
+	stats, err := os.Stat(filepath)
+	if err != nil {
+		return []byte{}, fmt.Errorf("Error getting file stats: %s\n", err)
+	}
+
+	data, err := os.ReadFile(filepath)
+	if err != nil {
+		return []byte{}, fmt.Errorf("Error reading file: %s\n", err)
+	}
+
+	b := blob{
+		size:    int(stats.Size()),
+		content: data,
+	}
+
+	serialized := b.Bytes()
+	compressed, err := zlibCompress(serialized)
+	if err != nil {
+		return []byte{}, fmt.Errorf("Error compressing data: %s\n", err)
+	}
+
+	sha1, err := computeSHA1(serialized)
+	if err != nil {
+		return []byte{}, fmt.Errorf("Error computing SHA-1: %s\n", err)
+	}
+
+	if err = writeToSHA1(sha1, compressed); err != nil {
+		return []byte{}, fmt.Errorf("Error writing file: %s\n", err)
+	}
+
+	return sha1, nil
+}
+
+func runHashTree(path string) ([]byte, error) {
+	files, err := os.ReadDir(path)
+	if err != nil {
+		return []byte{}, fmt.Errorf("Failed to list files in dir: %s", err)
+	}
+
+	treeObj := tree{
+		size:  0,
+		nodes: []treeNode{},
+	}
+
+	for _, file := range files {
+		name := file.Name()
+		if name == ".git" {
+			continue
+		}
+
+		fullPath := filepath.Join(path, name)
+
+		if file.IsDir() == false {
+			sha1, err := runHashBlob(fullPath)
+			if err != nil {
+				return []byte{}, fmt.Errorf("Failed to hash blob for file %s: %s", fullPath, err)
+			}
+
+			hashByte := [20]byte{}
+			copy(hashByte[:], sha1)
+
+			node := treeNode{
+				mode: "100644",
+				name: name,
+				hash: hashByte,
+			}
+
+			treeObj.nodes = append(treeObj.nodes, node)
+
+			// add 2 for space and null byte
+			treeObj.size += len([]byte(node.mode)) + len([]byte(node.name)) + 2 + len(node.hash)
+			continue
+		}
+
+		sha1, err := runHashTree(fullPath)
+		if err != nil {
+			return []byte{}, fmt.Errorf("Failed to hash tree for dir %s: %s", fullPath, err)
+		}
+
+		hashByte := [20]byte{}
+		copy(hashByte[:], sha1)
+
+		node := treeNode{
+			mode: "40000",
+			name: name,
+			hash: hashByte,
+		}
+
+		treeObj.nodes = append(treeObj.nodes, node)
+
+		// add 2 for space and null byte
+		treeObj.size += len([]byte(node.mode)) + len([]byte(node.name)) + 2 + len(node.hash)
+	}
+
+	serialized := treeObj.Bytes()
+	compressed, err := zlibCompress(serialized)
+	if err != nil {
+		return []byte{}, fmt.Errorf("Error compressing data: %s\n", err)
+	}
+
+	sha1, err := computeSHA1(serialized)
+	if err != nil {
+		return []byte{}, fmt.Errorf("Error computing SHA-1: %s\n", err)
+	}
+
+	if err = writeToSHA1(sha1, compressed); err != nil {
+		return []byte{}, fmt.Errorf("Error writing file: %s\n", err)
+	}
+
+	return sha1, nil
 }
