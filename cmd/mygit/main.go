@@ -27,6 +27,9 @@ func main() {
 	case "write-tree":
 		writeTree()
 
+	case "commit-tree":
+		commitTree(os.Args[2], os.Args[4], os.Args[6])
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command %s\n", command)
 		os.Exit(1)
@@ -58,8 +61,8 @@ func initGit() {
 	fmt.Println("Initialized git directory")
 }
 
-func catFile(sha1 string) {
-	compressed, err := readFromSHA1(sha1)
+func catFile(sha1Hex string) {
+	compressed, err := readFromSHA1(sha1Hex)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
 		os.Exit(1)
@@ -97,8 +100,8 @@ func hashObject(filepath string) {
 	fmt.Print(hex)
 }
 
-func lsTree(sha1 string) {
-	compressed, err := readFromSHA1(sha1)
+func lsTree(sha1Hex string) {
+	compressed, err := readFromSHA1(sha1Hex)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
 		os.Exit(1)
@@ -140,6 +143,16 @@ func writeTree() {
 	}
 
 	hex := fmt.Sprintf("%x", sha1)
+	fmt.Print(hex)
+}
 
+func commitTree(treeSha1Hex, commitSha1Hex, message string) {
+	sha1, err := runHashCommit(treeSha1Hex, []string{commitSha1Hex}, message)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write commit: %s", err)
+		os.Exit(1)
+	}
+
+	hex := fmt.Sprintf("%x", sha1)
 	fmt.Print(hex)
 }

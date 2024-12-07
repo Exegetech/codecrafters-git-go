@@ -14,7 +14,6 @@ type gitObject interface {
 }
 
 type blob struct {
-	size    int
 	content []byte
 }
 
@@ -23,15 +22,14 @@ func (b blob) getType() string {
 }
 
 func (b blob) getSize() int {
-	return b.size
+	return len(b.content)
 }
 
 func (b blob) Bytes() []byte {
-	return []byte(fmt.Sprintf("blob %d\x00%s", b.size, b.content))
+	return []byte(fmt.Sprintf("blob %d\x00%s", b.getSize(), b.content))
 }
 
 type tree struct {
-	size  int
 	nodes []treeNode
 }
 
@@ -46,22 +44,76 @@ func (t tree) getType() string {
 }
 
 func (t tree) getSize() int {
-	return t.size
+	content := t.getContent()
+	return len(content)
 }
 
-func (t tree) Bytes() []byte {
-	total := []byte{}
-
-	header := fmt.Sprintf("tree %d\x00", t.size)
-	total = append(total, []byte(header)...)
+func (t tree) getContent() []byte {
+	data := []byte{}
 
 	for _, node := range t.nodes {
 		entry := fmt.Sprintf("%s %s\x00", node.mode, node.name)
-		total = append(total, []byte(entry)...)
-		total = append(total, node.hash[:]...)
+		data = append(data, []byte(entry)...)
+		data = append(data, node.hash[:]...)
 	}
 
-	return total
+	return data
+}
+
+func (t tree) Bytes() []byte {
+	data := []byte{}
+
+	content := t.getContent()
+	header := fmt.Sprintf("tree %d\x00", len(content))
+
+	data = append(data, []byte(header)...)
+	data = append(data, content...)
+
+	return data
+}
+
+type commit struct {
+	treeSha1Hex    string
+	parentsSha1Hex []string
+	message        string
+}
+
+func (c commit) getType() string {
+	return "commit"
+}
+
+func (c commit) getSize() int {
+	content := c.getContent()
+	return len(content)
+}
+
+func (c commit) getContent() []byte {
+	data := []byte{}
+
+	treeSection := fmt.Sprintf("tree %s\n", c.treeSha1Hex)
+	data = append(data, []byte(treeSection)...)
+
+	for _, parent := range c.parentsSha1Hex {
+		parentSection := fmt.Sprintf("parent %s\n", parent)
+		data = append(data, []byte(parentSection)...)
+	}
+
+	messageSection := fmt.Sprintf("\n%s\n", c.message)
+	data = append(data, []byte(messageSection)...)
+
+	return data
+}
+
+func (c commit) Bytes() []byte {
+	data := []byte{}
+
+	content := c.getContent()
+	header := fmt.Sprintf("commit %d\x00", len(content))
+
+	data = append(data, []byte(header)...)
+	data = append(data, content...)
+
+	return data
 }
 
 func parseObjectContent(data []byte) (gitObject, error) {
@@ -89,10 +141,7 @@ func parseObjectContent(data []byte) (gitObject, error) {
 	}
 
 	if objectType == "blob" {
-		return blob{
-			size,
-			content,
-		}, nil
+		return blob{content}, nil
 	}
 
 	if objectType == "tree" {
@@ -102,7 +151,6 @@ func parseObjectContent(data []byte) (gitObject, error) {
 		}
 
 		return tree{
-			size,
 			nodes,
 		}, nil
 	}
@@ -145,18 +193,12 @@ func parseTreeEntry(data []byte) ([]treeNode, error) {
 }
 
 func runHashBlob(filepath string) ([]byte, error) {
-	stats, err := os.Stat(filepath)
-	if err != nil {
-		return []byte{}, fmt.Errorf("Error getting file stats: %s\n", err)
-	}
-
 	data, err := os.ReadFile(filepath)
 	if err != nil {
 		return []byte{}, fmt.Errorf("Error reading file: %s\n", err)
 	}
 
 	b := blob{
-		size:    int(stats.Size()),
 		content: data,
 	}
 
@@ -185,7 +227,6 @@ func runHashTree(path string) ([]byte, error) {
 	}
 
 	treeObj := tree{
-		size:  0,
 		nodes: []treeNode{},
 	}
 
@@ -213,9 +254,6 @@ func runHashTree(path string) ([]byte, error) {
 			}
 
 			treeObj.nodes = append(treeObj.nodes, node)
-
-			// add 2 for space and null byte
-			treeObj.size += len([]byte(node.mode)) + len([]byte(node.name)) + 2 + len(node.hash)
 			continue
 		}
 
@@ -234,12 +272,34 @@ func runHashTree(path string) ([]byte, error) {
 		}
 
 		treeObj.nodes = append(treeObj.nodes, node)
-
-		// add 2 for space and null byte
-		treeObj.size += len([]byte(node.mode)) + len([]byte(node.name)) + 2 + len(node.hash)
 	}
 
 	serialized := treeObj.Bytes()
+	compressed, err := zlibCompress(serialized)
+	if err != nil {
+		return []byte{}, fmt.Errorf("Error compressing data: %s\n", err)
+	}
+
+	sha1, err := computeSHA1(serialized)
+	if err != nil {
+		return []byte{}, fmt.Errorf("Error computing SHA-1: %s\n", err)
+	}
+
+	if err = writeToSHA1(sha1, compressed); err != nil {
+		return []byte{}, fmt.Errorf("Error writing file: %s\n", err)
+	}
+
+	return sha1, nil
+}
+
+func runHashCommit(treeSha1Hex string, parentsCommitSha1Hex []string, message string) ([]byte, error) {
+	c := commit{
+		treeSha1Hex:    treeSha1Hex,
+		parentsSha1Hex: parentsCommitSha1Hex,
+		message:        message,
+	}
+
+	serialized := c.Bytes()
 	compressed, err := zlibCompress(serialized)
 	if err != nil {
 		return []byte{}, fmt.Errorf("Error compressing data: %s\n", err)

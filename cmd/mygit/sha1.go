@@ -6,9 +6,9 @@ import (
 	"os"
 )
 
-func readFromSHA1(sha1 string) ([]byte, error) {
-	dir := sha1[0:2]
-	filename := sha1[2:]
+func readFromSHA1(sha1Hex string) ([]byte, error) {
+	dir := sha1Hex[0:2]
+	filename := sha1Hex[2:]
 
 	filePath := fmt.Sprintf(".git/objects/%s/%s", dir, filename)
 	contents, err := os.ReadFile(filePath)
